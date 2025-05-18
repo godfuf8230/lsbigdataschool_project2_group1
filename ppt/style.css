@@ -1,0 +1,40 @@
+.reveal h1 {
+  font-size: 1.45em;
+}
+
+.reveal #index_h1{
+  font-size: 1.45em;
+  text-align: center;
+}
+
+.reveal h2 {
+  font-size: 1.3em;
+}
+
+.reveal h3 {
+  font-size: 1.1em;  /* 기준값 */
+}
+
+.reveal h4 {
+  font-size: 1.0em;
+}
+
+.reveal h5 {
+  font-size: 0.9em;
+}
+
+
+.reveal .cell-output.cell-output-display {
+  font-size: 0.85em;  /* 원하는 크기로 조정 (예: 0.85em, 12px 등) */
+}
+
+.reveal .cell-output.cell-output-display .plotly{
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.reveal table {
+  font-size: 0.85em;
+}
+

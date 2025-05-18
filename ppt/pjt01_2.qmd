@@ -1,0 +1,2252 @@
+---
+format: 
+  revealjs:
+    theme: simple
+    slide-number: true
+    transition: fade
+    echo: true
+    execute: true
+    code-tools: true   # ✅ 이걸 써줘야 접기 버튼 생김
+    code-fold: true     # 접을 수 있는 버튼 활성화
+    css: style.css
+    scrollable: true
+---
+
+# 창업을 하고싶은데...
+
+# **뭘 팔죠?**
+
+------------------------------------------------------------------------
+
+![](./asset/final_img.png){fig-align="center" width="500" height="700"}
+
+------------------------------------------------------------------------
+
+## 온라인 쇼핑 컨설팅 프로젝트!!
+
+-   **창업? 무엇을 팔 지가 문제잖아요?**
+
+-   **그래서 저희가 대신 분석했습니다!**
+
+
+```{python}
+#| echo: false
+import pandas as pd
+from scipy.stats import shapiro, ttest_ind, wilcoxon, chi2_contingency, ttest_rel, f_oneway
+import seaborn as sns
+import matplotlib.pyplot as plt
+import statsmodels.formula.api as smf
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.colors as pc
+
+
+plt.rcParams['font.family'] ='Malgun Gothic'
+plt.rcParams['axes.unicode_minus'] =False
+
+df = pd.read_csv('../data/onlineshopping.csv')
+df.head()
+
+value_columns = [col for col in df.columns if col.startswith('M') and len(col) >= 7]
+
+# 긴 형식으로 melt
+df_long = pd.melt(
+    df,
+    id_vars=['A 상품군별(1)', 'A 상품군별(2)', 'B 판매매체별(1)'],
+    value_vars=value_columns,
+    var_name='연월',
+    value_name='거래액(백만원)'
+)
+
+# 거래액 숫자형 변환
+df_long['거래액(백만원)'] = pd.to_numeric(df_long['거래액(백만원)'], errors='coerce')
+
+media_map = {
+    '10 모바일쇼핑': 'Mobile',
+    '20 인터넷쇼핑': 'Internet'
+}
+
+category_map = {
+    '000 합계': 'Total',
+    '001 컴퓨터 및 주변기기': 'Computer',
+    '002 가전·전자·통신기기': 'Electronics',
+    '003 서적': 'Books',
+    '004 사무·문구': 'Office Supplies',
+    '005 의복': 'Clothing',
+    '006 신발': 'Shoes',
+    '007 가방': 'Bags',
+    '008 패션용품 및 액세서리': 'Fashion Accessories',
+    '009 스포츠·레저용품': 'Sports & Leisure',
+    '010 화장품': 'Cosmetics',
+    '011 아동·유아용품': 'Kids & Baby',
+    '012 음·식료품': 'Food & Beverages',
+    '013 농축수산물': 'Agricultural Products',
+    '014 생활용품': 'Household Goods',
+    '015 자동차 및 자동차용품': 'Automobiles',
+    '016 가구': 'Furniture',
+    '017 애완용품': 'Pet Supplies',
+    '018 여행 및 교통서비스': 'Travel & Transport',
+    '019 문화 및 레저서비스': 'Culture & Leisure',
+    '020 이쿠폰서비스': 'E-Coupon Service',
+    '021 음식서비스': 'Food Service',
+    '022 기타서비스': 'Other Services',
+    '023 기타': 'Others'
+}
+
+```
+
+
+------------------------------------------------------------------------
+
+
+![](./asset/index_p.png){fig-align="center" width="100vw" height="100vh" object-fit="cover"}
+
+
+```{python}
+#| echo: false
+
+
+df_long['A 상품군별(1)'] = df_long['A 상품군별(1)'].map(category_map)
+df_long['B 판매매체별(1)'] = df_long['B 판매매체별(1)'].map(media_map)
+
+# 상품군 + 판매매체별로 거래액 총합
+grouped = df_long.groupby(['A 상품군별(1)', 'B 판매매체별(1)'])['거래액(백만원)'].sum().reset_index()
+
+# 인터넷/모바일을 열로 pivot
+pivot_df = grouped.pivot(index='A 상품군별(1)', columns='B 판매매체별(1)', values='거래액(백만원)').fillna(0)
+
+df_long.columns
+
+df_long.rename(columns={
+    'A 상품군별(1)': '상품군코드',
+    'A 상품군별(2)': '상품군세부',
+    'B 판매매체별(1)': '판매매체',
+    '연월': '년월',
+    '거래액(백만원)': '거래액_백만원'
+}, inplace=True)
+
+df_long
+
+
+# 년월 데이터 전처리
+df_long['년월'] = df_long['년월'].str.extract(r'(\d{4}\.\d{2})')
+df_long['년월'] = pd.to_datetime(df_long['년월'], format='%Y.%m')
+
+
+df_long['판매매체'].fillna('Total', inplace=True)
+
+df_long[(df_long['년월'] == '2017-01-01') & (df_long['판매매체'] == 'Internet')]
+
+df_long = df_long[df_long['상품군세부'] == '소계']
+
+df_long.drop(columns='상품군세부', inplace=True)
+```
+
+------------------------------------------------------------------------
+
+## 📊 온라인쇼핑 거래 데이터 분석
+
+-   **📌 출처**: 통계청 온라인쇼핑 동향\
+-   **📆 분석 기간**: 2017년 \~ 2025년\
+-   **📂 분석 기준**: 상품군, 판매매체, 월별 거래액\
+-   **🛍️ 총 23개 상품군**을 대상으로 분석
+
+```{python}
+#| echo: false
+print(df_long.info())
+```
+
+------------------------------------------------------------------------
+
+## 주제 1. 판매 금액을 기준으로 분석해보자
+
+> "최근 온라인 쇼핑 품목군 중, 무엇이 유망할까?!"<br>*세가지 기준으로 다각도 분석*
+
+-   "단순히 많이 팔린다고 다 유망한 건 아니다!"
+-   3가지 관점에서의 유망 품목 분석
+    1.  거래량이 진짜 증가했는가? (t-test)
+    2.  얼마나 많이 증가했는가? (증가율)
+    3.  계속해서 성장할 것인가? (회귀 기울기)
+
+------------------------------------------------------------------------
+
+## 분석 (1) - 평균 차이 검정 (t-test)
+
+> "과거보다 진짜로 많이 팔렸을까?"
+
+### 시각화
+
+```{python}
+#| echo: false
+early = df_long[df_long['년월'].dt.year <= 2019]
+recent = df_long[(df_long['년월'].dt.year >= 2022) & (df_long['년월'].dt.year <= 2024)]
+
+early = early[early['상품군코드'] != 'Total']
+recent = recent[recent['상품군코드'] != 'Total']
+
+results = []
+
+for category in df_long['상품군코드'].unique():
+    early_vals = early[early['상품군코드'] == category]['거래액_백만원']
+    recent_vals = recent[recent['상품군코드'] == category]['거래액_백만원']
+
+    if len(early_vals) > 1 and len(recent_vals) > 1:
+        t_stat, p_value = ttest_ind(recent_vals, early_vals, equal_var=False)
+        results.append({
+            '상품군코드': category,
+            '이전평균': early_vals.mean(),
+            '최근평균': recent_vals.mean(),
+            '차이': recent_vals.mean() - early_vals.mean(),
+            'p-value': p_value
+        })
+
+
+result_df = pd.DataFrame(results).sort_values('차이', ascending=False)
+```
+
+```{python}
+#| echo: false
+top10 = result_df.sort_values('차이', ascending=False).head(10)
+result_df['label'] = result_df['상품군코드'].where(result_df['상품군코드'].isin(top10['상품군코드']))
+fig = px.scatter(
+    result_df,
+    x='이전평균',
+    y='최근평균',
+    color='차이',
+    size='차이',
+    size_max=80,
+    hover_name='상품군코드',
+    text='label',  
+    color_continuous_scale='RdBu',
+    title="📊 과거 vs 최근 평균 거래액 비교"
+)
+fig.update_traces(textposition='top center', textfont_size=15)
+fig.update_layout(template='seaborn', width=1000, height=600)
+fig.show()
+```
+
+
+
+
+
+
+
+### 품목별 과거 vs 최근 평균 비교 (t-test)
+
+-   **분석 방법**: 2017\~2019 vs 2022\~2024 평균 거래액 비교
+-   **검정 방법**: 독립표본 t-검정
+-   가설
+    -   H₀: 두 시기의 평균 거래액에 차이가 없다
+    -   H₁: 두 시기의 평균 거래액에 차이가 있다
+
+```{python}
+#| code-fold: false
+for category in df_long['상품군코드'].unique():
+    early_vals = early[early['상품군코드'] == category]['거래액_백만원']
+    recent_vals = recent[recent['상품군코드'] == category]['거래액_백만원']
+
+    if len(early_vals) > 1 and len(recent_vals) > 1:
+        t_stat, p_value = ttest_ind(recent_vals, early_vals, equal_var=False)
+        results.append({
+            '상품군코드': category,
+            '이전평균': early_vals.mean(),
+            '최근평균': recent_vals.mean(),
+            '차이': recent_vals.mean() - early_vals.mean(),
+            'p-value': p_value
+        })
+
+
+
+result_df = pd.DataFrame(results).sort_values('차이', ascending=False)
+
+result_df.drop(columns='차이').reset_index(drop=True).style.format({
+    '이전평균': '{:,.0f}',   # 천 단위 쉼표 + 정수로
+    '최근평균': '{:,.0f}',
+    'p-value': '{:.1e}'      # 지수표현 유지
+})
+```
+
+
+
+####  2017~2019 대비 2022~2024 평균 거래액 차이 TOP 10
+(*t-검정 기반 유의미한 증가 품목군*)
+
+| 순위 | 상품군             | 특징 요약                              |
+|------|--------------------|-----------------------------------------|
+| 1    | Food Service       | **가장 높은 평균 거래액 상승**          |
+| 2    | Food & Beverages   | **꾸준한 증가세, 거래 규모도 큼**       |
+| 3    | Electronics         | **소비자 수요 안정적**                  |
+| 4    | Travel & Transport | **코로나 회복 후 반등 품목**            |
+| 5    | Household Goods    | **생활 필수재로 안정된 판매**           |
+| 6    | Agricultural Products | **가파른 성장, 기초 소비재**         |
+| 7    | Clothing           | **기본 수요 지속됨**                    |
+| 8    | E-Coupon Service   | **디지털 소비 트렌드와 맞물림**         |
+| 9    | Automobiles        | **상대적 거래 증가폭 매우 큼**          |
+| 10   | Computer           | **상대적으로 완만하지만 지속적인 증가** |
+
+------------------------------------------------------------------------
+
+## 분석 (2) - 비율 증가율
+
+> "과거 대비 몇 배나 성장했을까?"
+
+-   **기준**: 증가율 = (최근 - 과거) / 과거
+-   **의미**: 과거 거래액을 기준으로 최근 거래액이 몇 배로 증가했는지 확인
+
+```{python}
+#| echo: false
+df_long['연도'] = df_long['년월'].dt.year
+df_long['월'] = df_long['년월'].dt.month
+df_long_without_total = df_long[df_long['상품군코드'] != 'Total']
+
+avg_early = df_long_without_total[df_long_without_total['연도'].between(2017, 2019)].groupby('상품군코드')['거래액_백만원'].mean().reset_index(name='과거평균')
+avg_recent = df_long_without_total[df_long_without_total['연도'].between(2022, 2024)].groupby('상품군코드')['거래액_백만원'].mean().reset_index(name='최근평균')
+
+merged = pd.merge(avg_early, avg_recent, on='상품군코드')
+merged['증가배수'] = merged['최근평균'] / merged['과거평균']
+merged_sorted = merged.sort_values('증가배수', ascending=False)
+```
+
+
+```{python}
+#| echo: false
+# Top 10 상품군 추출
+top10 = merged_sorted.head(10)['상품군코드'].tolist()
+
+# Trace 리스트 생성
+bars = []
+
+for _, row in merged_sorted.iterrows():
+    is_top10 = row['상품군코드'] in top10
+    bars.append(
+        go.Bar(
+            x=[row['증가배수']],
+            y=[row['상품군코드']],
+            orientation='h',
+            name=row['상품군코드'],
+            marker_color='indianred' if is_top10 else 'lightblue',
+            text=f"{row['증가배수']:.2f}배" if is_top10 else None,
+            textposition='outside' if is_top10 else None,
+            hovertemplate='상품군: %{y}<br>증가배수: %{x:.2f}배<extra></extra>'
+        )
+    )
+
+# 레이아웃 설정
+layout = go.Layout(
+    title="📊 2017~2019 대비 2022~2024 거래액 증가 배수 (Top10 강조)",
+    xaxis_title="증가 배수",
+    yaxis_title="상품군",
+    barmode='stack',
+    width=1000,
+    height=700,
+    template='seaborn',
+    showlegend=False,
+)
+
+# 기준선 1 추가
+layout.shapes = [
+    dict(
+        type='line',
+        x0=1, x1=1,
+        y0=-0.5, y1=len(merged_sorted)-0.5,
+        line=dict(color='gray', dash='dash')
+    )
+]
+
+# 그림 출력
+fig = go.Figure(data=bars, layout=layout)
+fig.show()
+```
+
+
+####  2017~2019 대비 2022~2024 **거래액 증가 배수** TOP 10
+
+| 순위 | 상품군             | 증가 배수 |
+|------|--------------------|-----------|
+| 1    | Food Service       | **5.7배** |
+| 2    | Automobiles        | **4.4배** |
+| 3    | E-Coupon Service   | **3.88배** |
+| 4    | Agricultural Products | **3.66배** |
+| 5    | Pet Supplies       | **3.04배** |
+| 6    | Food & Beverages   | **2.86배** |
+| 7    | Other Services     | **2.62배** |
+| 8    | Office Supplies    | **2.31배** |
+| 9    | Household Goods    | **2.01배** |
+| 10   | Shoes              | **1.93배** |
+
+
+------------------------------------------------------------------------
+
+## 분석 (3) - 회귀분석 (기울기)
+
+> "단발성 유행이 아니라, 꾸준히 늘고 있나? 그럼 내년에는?"
+
+-   **분석 방법**: 연도별 평균 거래액 → 선형 회귀
+-   **기준**: 회귀선의 기울기 = 연도당 평균 증가량
+
+```{python}
+#| code-fold: false
+grouped = df_long_without_total.groupby(['연도', '상품군코드'])['거래액_백만원'].mean().reset_index()
+
+# 결과 저장 리스트
+regression_results = []
+grouped.columns
+for category in grouped['상품군코드'].unique():
+    df_category = grouped[grouped['상품군코드'] == category]
+    
+    if len(df_category) > 1:
+        model = smf.ols('Q("거래액_백만원") ~ 연도', data=df_category).fit()
+        coef = model.params['연도']
+        pval = model.pvalues['연도']
+        rsq = model.rsquared
+
+        regression_results.append({
+            '상품군코드': category,
+            '기울기': coef,
+            'p-value': pval,
+            'R-squared': rsq
+        })
+
+# 결과 데이터프레임 정렬
+regression_df = pd.DataFrame(regression_results).sort_values(by='기울기', ascending=False)
+```
+
+
+```{python}
+#| echo: false
+
+df_long_w_t_w_t = df_long_without_total[df_long_without_total['판매매체'] != 'Total']
+grouped = df_long_w_t_w_t.groupby(['연도', '상품군코드'])['거래액_백만원'].mean().reset_index()
+
+grouped['상품군코드'].unique()
+
+# 회귀선 포함 데이터 생성
+plot_df = pd.DataFrame()
+for cat in grouped['상품군코드'].unique():
+    df_cat = grouped[grouped['상품군코드'] == cat].copy()
+    model = smf.ols('Q("거래액_백만원") ~ 연도', data=df_cat).fit()
+    df_cat['예측값'] = model.predict(df_cat)
+    df_cat['그룹'] = '전체'
+    plot_df = pd.concat([plot_df, df_cat])
+
+future_df = pd.DataFrame()
+for cat in grouped['상품군코드'].unique():
+    df_cat = grouped[grouped['상품군코드'] == cat].copy()
+    model = smf.ols('Q("거래액_백만원") ~ 연도', data=df_cat).fit()
+
+    # 실제 마지막 연도 값 (2024)
+    y_2024 = df_cat[df_cat['연도'] == 2024]['거래액_백만원'].values[0]
+
+    # 2025 예측값
+    y_2025 = model.predict(pd.DataFrame({'연도': [2025]})).values[0]
+
+    # 이어붙일 데이터프레임
+    temp_df = pd.DataFrame({
+        '상품군코드': [cat, cat],
+        '연도': [2024, 2025],
+        '예측값': [y_2024, y_2025]
+    })
+
+    future_df = pd.concat([future_df, temp_df], ignore_index=True)
+
+
+
+fig = go.Figure()
+
+# 실제값: 2024까지 실선
+df_actual_plot = plot_df[plot_df['연도'] <= 2024]
+for cat in grouped['상품군코드'].unique():
+    df_cat = df_actual_plot[df_actual_plot['상품군코드'] == cat]
+    fig.add_trace(go.Scatter(
+        x=df_cat['연도'],
+        y=df_cat['거래액_백만원'],
+        mode='lines+markers',
+        name=f'{cat} (실제)',
+        line=dict(dash='solid'),
+        opacity=0.3
+    ))
+
+# 예측값: 2024~2025 점선 (앞에 2024 실측 붙여서 이어짐)
+for cat in grouped['상품군코드'].unique():
+    df_cat = future_df[future_df['상품군코드'] == cat]
+    fig.add_trace(go.Scatter(
+        x=df_cat['연도'],
+        y=df_cat['예측값'],
+        mode='lines+markers',
+        name=f'{cat} (예측)',
+        line=dict(dash='dot'),
+    ))
+
+# 레이아웃
+fig.update_layout(
+    title='상품군별 거래액 추이 (2024 실제 + 2025 예측)',
+    xaxis_title='연도',
+    yaxis_title='평균 거래액 (백만원)',
+    template='simple_white',
+    width=1000,
+    height=800,  # ⬅️ 기존 600 → 800으로 높임
+    legend_title='상품군코드',
+    hovermode='x unified',
+    yaxis=dict(
+        tickformat=',',  # 천 단위 콤마 표시
+        tick0=0,         # 시작 값
+        dtick=200000,    # ⬅️ 이걸로 단위 간격 조절 (예: 20만 단위)
+        title_font=dict(size=14),
+    )
+)
+
+fig.update_layout(
+    shapes=[
+        # 2025년 하이라이트 영역 (배경 색 추가)
+        dict(
+            type="rect",
+            xref="x", yref="paper",
+            x0=2024, x1=2025,
+            y0=0, y1=1,
+            fillcolor="LightSalmon",
+            opacity=0.2,
+            layer="below",
+            line_width=3,
+        )
+    ]
+)
+
+fig.show()
+
+```
+
+
+### 내년까지 쭉 오른다?!
+### 데이터로 예측한 품목별 성장 속도 TOP 10
+
+| 순위 | 상품군 | 기울기 |
+|-----|------------------|------------| 
+| 1 | Food Service | 238,228 |
+| 2 | Food & Beverages | 123,202 |
+| 3 | Electronics | 99,154 |
+| 4 | Agricultural Products | 74,433 |
+| 5 | Computer | 65,871 |
+| 6 | Household Goods | 46,130 |
+| 7 | Cosmetics | 33,091 |
+| 8 | E-Coupon Service | 27,776 |
+| 9 | Other Services | 24,808 |
+| 10 | Furniture | 23,117 |
+
+------------------------------------------------------------------------
+
+## 🎯 첫번째 주제를 통한 추려진 Top 10 품목군
+
+| 순위 | 품목군 | 이유 요약 |
+|------|----------------------|-----------------------|
+| 1 | Food Service | 모든 분석에서 1위<br>압도적 거래액<br>4.7배 증가<br>회귀 기울기 최상 |
+| 2 | Food & Beverages | 거래액 2위<br>회귀 기울기 2위<br>증가율도 중상위 |
+| 3 | Agricultural Products | 증가율 2.6배<br>회귀 기울기 5위<br>전반적으로 고성장 |
+| 4 | E-Coupon Service | 증가율 2.9배<br>회귀 기울기 8위<br>디지털 소비 트렌드와 맞물림 |
+| 5 | Automobiles | 증가율 3.4배<br>회귀 기울기 9위<br>t-test 상위권 |
+| 6 | Household Goods | 회귀 기울기 6위<br>전체적으로 상승 안정적<br>생활필수재 수요 증가 |
+| 7 | Electronics | 거래액 3위<br>회귀 기울기 4위<br>꾸준한 수요 |
+| 8 | Travel & Transport | 회귀 기울기 3위<br>코로나 이후 반등 기대 품목 |
+| 9 | Clothing | 회귀 기울기 7위<br>여전히 기본 수요 유지 |
+| 10 | Computer | 고성장 품목은 아님<br>하지만 꾸준히 상위권<br>회귀 기울기 10위 |
+
+
+---
+
+## 주제 2. 일시적 유행 아닌, 꾸준히 성장하는 품목은?
+
+> 거래 변동성이 적은 스테디셀러 상품을 찾아라! <br />(with 선형회귀 분석)
+
+- 품군별 거래액의 분산(변동성)을 계산
+- 거래액의 변동성 순위화
+
+```{python}
+#| echo: false
+#| fig-width: 4
+#| fig-height: 2
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import seaborn as sns
+
+# 필터 및 전처리
+filtered_codes = ['Food Service', 'Food & Beverages', 'Agricultural Products', 'E-Coupon Service', 'Automobiles', 'Household Goods', 'Electronics', 'Travel & Transport', 'Clothing', 'Computer']
+
+df_filtered_10 = df_long_without_total[df_long_without_total['상품군코드'].isin(filtered_codes)]
+df_filtered = df_filtered_10[(df_filtered_10['연도'] >= 2022) & (df_filtered_10['연도'] <= 2024)]
+```
+
+```{python}
+# 연도별 거래액 합계
+grouped_var = df_filtered.groupby(['연도', '상품군코드'])['거래액_백만원'].sum().reset_index()
+
+# 분산 계산
+var_df = grouped_var.groupby('상품군코드')['거래액_백만원'].var().reset_index(name='거래액_분산')
+```
+
+```{python}
+#| echo: false
+cutoff = 5e+12
+
+data = var_df.sort_values('거래액_분산', ascending=True).copy()
+data['클리핑된분산'] = np.minimum(data['거래액_분산'], cutoff)
+colors = sns.color_palette("Blues", len(data))[::-1]
+data['color'] = colors
+
+# 분할
+data_small = data.copy()
+data_large = data[data['거래액_분산'] > cutoff]
+
+fig = make_subplots(rows=1, cols=2, shared_yaxes=True, column_widths=[0.7, 0.3])
+
+fig.add_trace(go.Bar(
+    y=data_small['상품군코드'],
+    x=data_small['클리핑된분산'],
+    orientation='h',
+    text=[f"{v:,.0f}" for v in data_small['거래액_분산']],
+    textposition="outside",
+    marker_color=[f'rgba({int(r*255)},{int(g*255)},{int(b*255)},1)' for r, g, b in data_small['color']]
+), row=1, col=1)
+
+fig.add_trace(go.Bar(
+    y=data_large['상품군코드'],
+    x=data_large['거래액_분산'],
+    orientation='h',
+    text=[f"{v:,.0f}" for v in data_large['거래액_분산']],
+    textposition="outside",
+    marker_color=[f'rgba({int(r*255)},{int(g*255)},{int(b*255)},1)' for r, g, b in data_large['color']]
+), row=1, col=2)
+
+fig.update_layout(
+    height=600,
+    width=1000,
+    title_text="2022~2024년 품목별 거래액 분산",
+    plot_bgcolor='#f9f9f9',
+    paper_bgcolor='#f9f9f9',
+    font=dict(size=12),
+    margin=dict(t=80)
+)
+fig.update_yaxes(title_text="상품군", autorange="reversed")
+fig.show()
+```
+
+
+---
+
+## 상품군별 성장률과 변동성의 상관관계
+
+```{python}
+#| echo: false
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from scipy.stats import pearsonr
+import statsmodels.formula.api as smf
+import numpy as np
+import statsmodels.api as sm
+
+# 연도별 평균 집계
+grouped = df_filtered_10.groupby(['연도', '상품군코드'])['거래액_백만원'].mean().reset_index()
+```
+
+1. 상품군 별 연도(x)에 따른 거래액(y) 변화 (선형회귀분석)
+
+```{python}
+#| echo: false
+regression_results = []
+
+for category in grouped['상품군코드'].unique():
+    df_category = grouped[grouped['상품군코드'] == category]
+    if len(df_category) > 1:
+        model = smf.ols('Q("거래액_백만원") ~ 연도', data=df_category).fit()
+        coef = model.params['연도']
+        regression_results.append({'상품군코드': category,'기울기': coef})
+```
+
+```{python}
+#| echo: false
+regression_df = pd.DataFrame(regression_results)
+
+# 분산 계산
+var_df = grouped.groupby('상품군코드')['거래액_백만원'].var().reset_index(name='거래액_분산')
+
+df_corr = pd.merge(regression_df, var_df, on='상품군코드')
+```
+
+2. 상품군의 성장률(기울기)과 거래액 분산 간의 상관관계
+
+```{python}
+corr_coef, p_value = pearsonr(df_corr['기울기'], df_corr['거래액_분산'])
+print(f"▶ 상관계수 (기울기 vs 분산): r = {corr_coef:.4f}, p-value = {p_value:.4f}")
+```
+
+```{python}
+#| echo: false
+text_positions = []
+
+for idx, row in df_corr.iterrows():
+    if row['거래액_분산'] > df_corr['거래액_분산'].quantile(0.8):
+        text_positions.append('middle right')
+    elif row['거래액_분산'] > df_corr['거래액_분산'].quantile(0.4):
+        text_positions.append('top center')
+    else:
+        text_positions.append('top right')
+
+for i, row in enumerate(df_corr['상품군코드']):
+    if row == 'Computer':
+        text_positions[i] = 'bottom left'
+    elif row == 'Automobiles':
+        text_positions[i] = 'top center'
+
+df_corr['text_position'] = text_positions
+
+base_offset = df_corr['거래액_분산'].max() * 0.1
+df_corr['text_y'] = df_corr['거래액_분산'] + base_offset
+```
+
+3. 성장률(기울기)-분산로 하는 또 다른 회귀분석(선형회귀분석)
+
+```{python}
+# 회귀 모델 및 신뢰구간 계산
+x = df_corr['기울기']
+y = df_corr['거래액_분산']
+
+# 회귀 모델 생성
+X = sm.add_constant(x)
+model = sm.OLS(y, X).fit()
+```
+
+```{python}
+#| echo: false
+# 예측값 생성을 위한 x 값 범위
+x_range = np.linspace(x.min(), x.max(), 100)
+X_pred = sm.add_constant(x_range)
+```
+
+```{python}
+predictions = model.get_prediction(X_pred)
+frame = predictions.summary_frame(alpha=0.05)  # 95% 신뢰구간
+```
+
+```{python}
+#| echo: false
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=x_range,
+    y=frame['mean'],
+    mode='lines',
+    line=dict(color='red', width=2),
+    name='회귀선'
+))
+
+fig.add_trace(go.Scatter(
+    x=x_range,
+    y=frame['mean_ci_lower'],
+    mode='lines',
+    line=dict(width=0),
+    showlegend=False
+))
+
+fig.add_trace(go.Scatter(
+    x=x_range,
+    y=frame['mean_ci_upper'],
+    mode='lines',
+    line=dict(width=0),
+    fill='tonexty',
+    fillcolor='rgba(255, 0, 0, 0.2)',
+    name='95% 신뢰구간'
+))
+
+fig.add_trace(go.Scatter(
+    x=df_corr['기울기'],
+    y=df_corr['거래액_분산'],
+    mode='markers',
+    marker=dict(size=10, color='royalblue'),
+    name='데이터 점',
+    text=df_corr['상품군코드'],
+    hovertemplate="<b>%{text}</b><br>기울기: %{x:.2f}<br>분산: %{y:,.0f}<extra></extra>",
+))
+
+for idx, row in df_corr.iterrows():
+    fig.add_trace(go.Scatter(
+        x=[row['기울기']],
+        y=[row['text_y']],
+        mode='text',
+        text=[row['상품군코드']],
+        textfont=dict(size=12),
+        textposition=row['text_position'],
+        showlegend=False
+    ))
+
+fig.add_annotation(
+    x=0.55 * df_corr['기울기'].max(),
+    y=0.18 * df_corr['거래액_분산'].max(),
+    text="성장률이 높은 상품군일수록<br>변동성도 높은 경향이 있음<br>(고성장 = 고위험)",
+    showarrow=False,
+    align='left',
+    font=dict(size=12),
+    bgcolor='lightyellow',
+    bordercolor='gray',
+    borderwidth=1,
+    opacity=0.9
+)
+
+fig.add_annotation(
+    x=0.05 * df_corr['기울기'].max(),
+    y=0.9 * df_corr['거래액_분산'].max(),
+    text=f"상관계수: r = {corr_coef:.4f}<br>p-value < 0.0001",
+    showarrow=False,
+    align='left',
+    font=dict(size=12),
+    bgcolor='white',
+    bordercolor='gray',
+    borderwidth=1,
+    opacity=0.9
+)
+
+fig.update_layout(
+    title='회귀 기울기 vs 거래액 분산 (안정성 분석)',
+    xaxis=dict(
+        title='거래액 증가 기울기 (연간 성장률)',
+        title_font=dict(size=14),
+        tickfont=dict(size=12)
+    ),
+    yaxis=dict(
+        title='거래액 분산 (변동성)',
+        title_font=dict(size=14),
+        tickfont=dict(size=12)
+    ),
+    margin=dict(t=80),
+    font=dict(size=13),
+    template='simple_white',
+    height=600,
+    width=800
+)
+
+fig.show()
+```
+
+---
+
+## 성장률과 변동성의 관계
+
+- 상품군의 성장률과 변동성 사이에 통계적으로 유의미한 강한 양의 상관관계가 있음
+- 성장률이 높은 품목일수록 변동성도 높은 경향이 있음
+- 안정적인 성장을 보이는 품목은 Computer, Electronics, Automobiles
+- 높은 성장률과 함께 높은 변동성을 보이는 품목은 Food Service, Food & Beverages
+
+---
+
+## 최종적으로 분산이 낮은 순으로 5개 선택!
+
+#### **분산 낮은 순 TOP 5**
+
+| 순위 | 항목             | 거래액 분산              |
+|-----|-----------------|-----------------------|
+| 🥇  |  Computer       | 402,199,096,492        |
+| 🥈  |  Electronics    | 1,984,946,558,970      |
+| 🥉  | Automobiles      | 2,453,297,729,299 |
+| 4   | Clothing         | 4,285,422,325,214 |
+| 5   | E-Coupon Service | 4,870,490,975,345 |
+
+-----
+
+## 주제 3. 팬데믹이 e-commerce 시장에 미친 복합적 영향 분석
+
+> "팬데믹 상황에서도 살아남을 수 있는 품목군은 무엇일까?"
+
+- "무조건 잘 팔리는 것 말고, 진짜 **기회**를 잡아보자!"
+- 4가지 데이터 분석으로 유망 품목군 발굴
+
+  1. **팬데믹 이후 달라진 소비패턴** (변화율)
+  2. **통계적으로 유의미한 변화일까?** (Mann-Whitney U 검정)
+  3. **팬데믹 시대, 성장 추세 분석** (결정계수)
+  4. **안정적인 성장 품목군** (성장률과 변동성을 동시에 고려한 복합점수)
+
+---
+
+## 분석 (1) 팬데믹 이후 소비패턴 변화 분석
+
+> 분석: 연간 변화율(%) 분석 <br>
+-   대상: 연간 거래액 기준 상위 10개 품목군 <br>
+-   기간: 2019~2021년 (코로나 전·후 3개년) <br>
+-   핵심 지표: 연간 거래액 규모 비교
+
+```{python}
+#| echo: false
+import numpy as np
+
+# 연도 추출
+df_long['Year'] = df_long['년월'].dt.year.astype(str)
+
+# 2019, 2020, 2021년 데이터 필터링
+df_3yrs = df_long[
+    df_long['Year'].isin(['2019', '2020', '2021']) &
+    (df_long['상품군코드'] != 'Total')
+]
+
+# 상품군별, 연도별 거래액 합산
+yearly_total = df_3yrs.groupby(['상품군코드', 'Year'])['거래액_백만원'].sum().unstack()
+
+# NaN 있는 상품군 제거
+yearly_total = yearly_total.dropna()
+
+# 상위 10개 상품군 기준 정렬 (2021 거래액 기준)
+top10 = yearly_total.sort_values(by='2021', ascending=False).head(10)
+
+# 변화율 계산
+top10['변화율(2019→2020)(%)'] = ((top10['2020'] - top10['2019']) / top10['2019']) * 100
+top10['변화율(2020→2021)(%)'] = ((top10['2021'] - top10['2020']) / top10['2020']) * 100
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Travel & Transport 분리
+tt_idx = top10.index.get_loc('Travel & Transport') if 'Travel & Transport' in top10.index else None
+
+# Travel & Transport만 따로, 나머지 9개 따로
+if tt_idx is not None:
+    top9 = top10.drop('Travel & Transport')
+    tt = top10.loc[['Travel & Transport']]
+else:
+    top9 = top10
+    tt = None
+
+x9 = np.arange(len(top9.index))
+width = 0.25
+
+fig, axes = plt.subplots(1, 2, figsize=(18, 6), gridspec_kw={'width_ratios':[2,1]})
+
+# (1) Travel & Transport 제외 9개 품목군
+axes[0].bar(x9 - width, top9['2019'], width=width, label='2019', color='skyblue')
+axes[0].bar(x9, top9['2020'], width=width, label='2020', color='orange')
+axes[0].bar(x9 + width, top9['2021'], width=width, label='2021', color='lightgreen')
+
+# 변화율 텍스트
+for i in range(len(top9)):
+    change_1 = top9['변화율(2019→2020)(%)'].iloc[i]
+    sign_1 = '+' if change_1 >= 0 else ''
+    axes[0].text(x9[i], top9['2020'].iloc[i] + 100, f'{sign_1}{change_1:.1f}%', 
+                 ha='center', va='bottom', fontsize=9, color='green' if change_1 >= 0 else 'red')
+    change_2 = top9['변화율(2020→2021)(%)'].iloc[i]
+    sign_2 = '+' if change_2 >= 0 else ''
+    axes[0].text(x9[i] + width, top9['2021'].iloc[i] + 100, f'{sign_2}{change_2:.1f}%', 
+                 ha='center', va='bottom', fontsize=9, color='green' if change_2 >= 0 else 'red')
+
+axes[0].set_xticks(x9)
+axes[0].set_xticklabels(top9.index, rotation=45, ha='right')
+axes[0].set_ylabel('거래액 (백만원)')
+axes[0].set_title('상위 품목군')
+axes[0].legend()
+axes[0].grid(axis='y')
+
+# (2) Travel & Transport만 별도 시각화
+if tt is not None:
+    x_tt = np.arange(1)
+    axes[1].bar(x_tt - width, tt['2019'], width=width, label='2019', color='skyblue')
+    axes[1].bar(x_tt, tt['2020'], width=width, label='2020', color='orange')
+    axes[1].bar(x_tt + width, tt['2021'], width=width, label='2021', color='lightgreen')
+
+    # 변화율 텍스트
+    change_1 = tt['변화율(2019→2020)(%)'].iloc[0]
+    sign_1 = '+' if change_1 >= 0 else ''
+    axes[1].text(x_tt[0], tt['2020'].iloc[0] + 100, f'{sign_1}{change_1:.1f}%', 
+                 ha='center', va='bottom', fontsize=9, color='green' if change_1 >= 0 else 'red')
+    change_2 = tt['변화율(2020→2021)(%)'].iloc[0]
+    sign_2 = '+' if change_2 >= 0 else ''
+    axes[1].text(x_tt[0] + width, tt['2021'].iloc[0] + 100, f'{sign_2}{change_2:.1f}%', 
+                 ha='center', va='bottom', fontsize=9, color='green' if change_2 >= 0 else 'red')
+
+    axes[1].set_xticks(x_tt)
+    axes[1].set_xticklabels(['Travel & Transport'])
+    axes[1].set_ylabel('거래액 (백만원)')
+    axes[1].set_title('Travel & Transport')
+    axes[1].legend()
+    axes[1].grid(axis='y')
+
+plt.tight_layout()
+plt.show()
+```
+
+- 팬데믹 이후 온라인 쇼핑에서 생필품 소비는 증가하고, 여행·문화 상품은 크게 감소함
+- 이는 비대면 일상과 외부 활동 제한의 영향을 반영함
+
+---
+
+## 분석 (2) 팬데믹 전후로 각 품목군의 거래액이 통계적으로 유의하게 변화했는가?
+
+```{python}
+#| echo: false
+import pandas as pd
+import numpy as np
+from scipy.stats import mannwhitneyu
+
+# 분석 대상 품목군
+target_categories = ['Computer', 'Electronics', 'Automobiles', 'Clothing', 'E-Coupon Service']
+
+# 코로나 전후 기간
+pre_covid_start = pd.to_datetime('2018-01-01')
+pre_covid_end = pd.to_datetime('2019-12-31')
+post_covid_start = pd.to_datetime('2020-01-01')
+post_covid_end = pd.to_datetime('2021-12-31')
+
+results = []
+
+for category in target_categories:
+    df_cat = df_long[df_long['상품군코드'] == category]
+    pre = df_cat[(df_cat['년월'] >= pre_covid_start) & (df_cat['년월'] <= pre_covid_end)]['거래액_백만원']
+    post = df_cat[(df_cat['년월'] >= post_covid_start) & (df_cat['년월'] <= post_covid_end)]['거래액_백만원']
+    n_pre, n_post = len(pre), len(post)
+    # 데이터가 충분할 때만 검정 수행
+    if n_pre >= 2 and n_post >= 2:
+        stat, p = mannwhitneyu(pre, post, alternative='two-sided')
+    else:
+        stat, p = np.nan, np.nan
+    results.append({
+        '품목군': category,
+        '전 평균(백만원)': pre.mean() if n_pre > 0 else np.nan,
+        '후 평균(백만원)': post.mean() if n_post > 0 else np.nan,
+        'U(통계량)': stat,
+        'p-value': p
+    })
+
+results_df = pd.DataFrame(results).set_index('품목군')
+
+# 숫자 포맷 통일 (자리수 축소)
+table = results_df.reset_index()
+table['전 평균(백만원)'] = table['전 평균(백만원)'].map(lambda x: f"{x:,.0f}")
+table['후 평균(백만원)'] = table['후 평균(백만원)'].map(lambda x: f"{x:,.0f}")
+table['U(통계량)'] = table['U(통계량)'].map(lambda x: f"{x:.0f}")
+table['p-value'] = table['p-value'].map(lambda x: f"{x:.2e}")
+
+# 각 칼럼의 최대 너비 계산
+columns = ['품목군', '전 평균(백만원)', '후 평균(백만원)', 'U(통계량)', 'p-value']
+col_widths = [max(table[col].astype(str).map(len).max(), len(col)) for col in columns]
+
+# 헤더 출력
+# header = " | ".join([col.ljust(col_widths[i]) for i, col in enumerate(columns)])
+# print(header)
+# print("-" * len(header))
+
+# 각 행 출력 (U만 왼쪽 정렬, 나머지는 오른쪽 정렬)
+# for idx, row in table.iterrows():
+#     row_strs = []
+#     for i, col in enumerate(columns):
+#         val = str(row[col])
+#         if col == 'U(통계량)':
+#             row_strs.append(val.ljust(col_widths[i]))
+#         else:
+#             row_strs.append(val.rjust(col_widths[i]))
+#     line = " | ".join(row_strs)
+#     print(line)
+```
+
+| 순위 | 품목군 | U(통계량) | p-value |
+|-----|-------|-----------|---------|
+| 1   | Computer | 1080 | 1.55e-09 |
+| 2   | Electronics | 1454 | 5.50e-06 |
+| 3   | Automobiles | 742 | 1.47e-13 |
+| 4   | Clothing | 2303 | 2.49e-01 |
+| 5   | E-Coupon Service | 1236 | 6.10e-08 |
+
+- Mann-Whitney U test로 검정 결과
+    - 모든 품목군 **통계적으로 유의한 변화(p<0.05)**
+    - 팬데믹 이후 소비패턴이 실제로 크게 달라졌음을 의미
+
+---
+
+## 분석 (3) 팬데믹 전후 품목군별 성장 추세 분석
+
+<!-- > 목적: 팬데믹 전후 각 품목군의 거래액 성장률과 변화 패턴(일관성) 분석 <br> -->
+
+- 기간: 2019~2021년 (코로나 전·후 3개년) <br>
+- 성장률: 팬데믹 이후 평균 거래액이 이전 대비 얼마나 증감했는지 <br>
+- R²: 거래액 변화의 시간적 일관성(선형성)을 나타내는 지표 <br>
+
+```{python}
+#| echo: false
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+# 분석 대상 품목군
+target_categories = ['Computer', 'Electronics', 'Automobiles', 'Clothing', 'E-Coupon Service']
+
+# 팬데믹 전후 기간
+pre_covid_start = pd.to_datetime('2018-01-01')
+pre_covid_end = pd.to_datetime('2019-12-31')
+post_covid_start = pd.to_datetime('2020-01-01')
+post_covid_end = pd.to_datetime('2021-12-31')
+
+summary = []
+
+for category in target_categories:
+    df_cat = df_long[df_long['상품군코드'] == category].copy()
+    df_cat = df_cat.sort_values('년월')
+    # 성장률
+    pre = df_cat[(df_cat['년월'] >= pre_covid_start) & (df_cat['년월'] <= pre_covid_end)]['거래액_백만원']
+    post = df_cat[(df_cat['년월'] >= post_covid_start) & (df_cat['년월'] <= post_covid_end)]['거래액_백만원']
+    avg_pre = pre.mean()
+    avg_post = post.mean()
+    growth_rate = (avg_post - avg_pre) / avg_pre if avg_pre != 0 else np.nan
+    # R² 계산 (전체 기간)
+    df_cat = df_cat.dropna(subset=['거래액_백만원'])
+    if len(df_cat) > 1:
+        X = np.arange(len(df_cat)).reshape(-1, 1)
+        y = df_cat['거래액_백만원'].values
+        model = LinearRegression().fit(X, y)
+        r2 = model.score(X, y)
+    else:
+        r2 = np.nan
+    summary.append({
+        '품목군': category,
+        '팬데믹 전후 성장률': growth_rate,
+        'R_squared': r2
+    })
+
+summary_df = pd.DataFrame(summary)
+summary_df = summary_df.set_index('품목군')
+summary_df = summary_df.sort_values('팬데믹 전후 성장률', ascending=False)
+
+print("\n=== 품목군별 성장률 및 R²(보조지표) Summary ===")
+print(summary_df)
+```
+
+- R² 값이 전반적으로 낮아 대부분 품목군에서 성장세가 일관적이지 않고 변동성이 있었음
+- 이는 성장률뿐만 아니라 변동성까지 함께 고려해야 함을 의미
+<!-- 
+```{python}
+#| echo: false
+import matplotlib.pyplot as plt
+
+# 성장률 내림차순 정렬 (수평 점 그래프)
+growth_df = summary_df.sort_values('팬데믹 전후 성장률', ascending=True)  # 작은 값이 아래로
+
+plt.figure(figsize=(9, 6))
+plt.hlines(y=growth_df.index, xmin=0, xmax=growth_df['팬데믹 전후 성장률'], color='skyblue', lw=3)
+plt.plot(growth_df['팬데믹 전후 성장률'], growth_df.index, 'o', color='navy', markersize=10)
+
+# plt.axvline(0, color='gray', linestyle='--', lw=1)
+plt.xlabel('팬데믹 전후 성장률', fontsize=13)
+plt.title('품목군별 팬데믹 전후 성장률 (Dot Plot)', fontsize=15)
+plt.grid(axis='x', linestyle=':', alpha=0.7)
+plt.tight_layout()
+plt.show()
+```
+
+- 단기적으로 급성장한 품목군에 주목 <br>
+- 팬데믹 이후 식품, 자동차, 농산물은 거래액이 크게 늘었지만 변동성이 컸고, 여행·교통은 거래액이 줄어듦 -->
+
+---
+
+## 분석 (4) 팬데믹 상황에서 복합 점수가 높은 상위 품목군
+
+> 분석: 팬데믹 이후 품목군별 복합점수 비교
+
+- 목적: 팬데믹 전후 각 품목군의 성장률과 **안정성(변동성)**을 동시에 반영한 복합점수 산출
+- 성장률: 팬데믹 이후 평균 거래액이 얼마나 증가했는지
+- 안정성: 팬데믹 이후 거래액의 표준편차(변동성)
+$$
+\text{복합점수} = \frac{\text{성장률}}{\text{표준편차} + 1}
+$$
+
+- 성장률이 높고, 변동성이 낮을수록 점수가 높음
+
+```{python}
+#| echo: false
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+plt.rcParams['font.family'] = 'Malgun Gothic'
+plt.rcParams['axes.unicode_minus'] = False
+
+# === 코로나 전후 기간 설정 (2018-2019 vs 2020-2021) ===
+pre_covid_start = pd.to_datetime('2018-01-01')
+pre_covid_end = pd.to_datetime('2019-12-31')
+post_covid_start = pd.to_datetime('2020-01-01')
+post_covid_end = pd.to_datetime('2021-12-31')
+
+# === 분석 대상 품목군 ===
+target_categories = ['Computer', 'Electronics', 'Automobiles', 'Clothing', 'E-Coupon Service']
+
+# === 각 품목군의 월별 거래액 데이터 추출 ===
+category_data = {}
+for category in target_categories:
+    # 품목군별 데이터 추출
+    df_category = df_long[df_long['상품군코드'] == category]
+    
+    # 코로나 이전 데이터 (2018-2019)
+    pre_covid = df_category[(df_category['년월'] >= pre_covid_start) & (df_category['년월'] <= pre_covid_end)]
+    
+    # 코로나 이후 데이터 (2020-2021)
+    post_covid = df_category[(df_category['년월'] >= post_covid_start) & (df_category['년월'] <= post_covid_end)]
+
+    # 평균 거래액 및 표준편차 계산
+    avg_pre = pre_covid['거래액_백만원'].mean()
+    avg_post = post_covid['거래액_백만원'].mean()
+    std_post = post_covid['거래액_백만원'].std()
+    
+    # 성장률 및 복합 점수 계산
+    growth_rate = (avg_post - avg_pre) / avg_pre
+    composite_score = growth_rate / (std_post + 1)
+    
+    category_data[category] = composite_score
+
+# === 복합 점수 정렬 및 시각화 ===
+scores_df = pd.DataFrame.from_dict(category_data, orient='index', columns=['복합점수'])
+scores_df = scores_df.sort_values(by='복합점수', ascending=False)
+
+# 복합점수 단위 변환 (백만 단위)
+SCALE = 1_000_000
+scores_df['복합점수(백만단위)'] = scores_df['복합점수'] * SCALE
+
+# 상위 3개 품목군 재설정 (변환 후에도 동일)
+top_3_categories = scores_df.sort_values(by='복합점수(백만단위)', ascending=False).head(3).index.tolist()
+
+# 시각화
+plt.figure(figsize=(10, 6))
+colors = ['red' if cat in top_3_categories else 'gray' for cat in scores_df.index]
+plt.bar(scores_df.index, scores_df['복합점수(백만단위)'], color=colors)
+plt.title('팬데믹 상황에서 복합 점수 상위 품목군', fontsize=16)
+plt.xlabel('품목군', fontsize=16)
+plt.ylabel('복합점수 (×1,000,000)', fontsize=12)
+plt.xticks(rotation=45, ha='center', fontsize=15)
+plt.grid(axis='y')
+plt.tight_layout()
+plt.show()
+```
+
+- 복합점수(성장률+안정성)로 장기적으로 안정적이고 꾸준히 성장할 품목군에 주목
+
+---
+
+## 🎯 유망 품목군 복합점수 최종 Top 3
+
+| 순위 | 항목             | 복합점수              |
+|-----|-----------------|-----------------------|
+|  🥇 |  Automobiles       | 13.516764        |
+| 🥈  |  E-Coupon Service    | 4.967626      |
+| 🥉  | Computer      | 3.183995 |
+
+
+
+
+
+<h2 style="font-size: 20px; font-weight: bold; line-height: 1.3;">
+
+## 주제 4. 모바일과 인터넷,<br> 판매채널의 시너지가 제일 좋은 품목은?
+
+</h2>
+
+<blockquote style="font-size: 35px; font-style: italic; color: #555;">
+
+"어떤 품목에서 인터넷쇼핑과 모바일쇼핑의 시너지가 가장 좋을까?"
+
+</blockquote>
+
+<br>
+
+-   **분석 방법**: 판매채널 간의 관계 회귀분석
+-   **대상 품목**: Automobiles, E-Coupon Service, Computer
+
+```{python}
+#| echo: false
+
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import statsmodels.formula.api as smf
+import statsmodels.api as sm
+from scipy.stats import shapiro
+from statsmodels.stats.diagnostic import het_breuschpagan
+from scipy import stats
+```
+
+```{python}
+#| echo: true
+#| eval: true
+#| results: hide
+
+# 모바일과 인터넷 데이터 병합
+df_mobile = df_long[df_long['판매매체'] == 'Mobile'].copy()
+df_internet = df_long[df_long['판매매체'] == 'Internet'].copy()
+df_merged = pd.merge(
+    df_mobile,
+    df_internet,
+    on=['상품군코드', '년월'],
+    suffixes=('_mobile', '_internet')
+)
+
+# 컬럼명 변경
+df_merged.rename(columns={
+    '거래액_백만원_mobile': 'Mobile',
+    '거래액_백만원_internet': 'Internet'
+}, inplace=True)
+
+# 분석 대상 품목만 선택 (Automobiles, E-Coupon Service, Computer)
+categories = ['Automobiles', 'E-Coupon Service', 'Computer']
+df_selected = df_merged[df_merged['상품군코드'].isin(categories)].copy()
+
+
+```
+
+------------------------------------------------------------------------
+
+## 분석 (1) 판매채널 간의 관계 회귀분석
+
+$$
+\text{Mobile} = \beta_0 + \beta_1 \times \text{Internet} + \beta_2 \times D_1 + \beta_3 \times D_2 + \beta_4 \times (\text{Internet} \times D_1) + \beta_5 \times (\text{Internet} \times D_2) + \varepsilon
+$$
+
+> 품목을 범주형 더미변수(기준 범주: Automobiles)로 사용하여 상호작용 추가 회귀모델 설정
+
+-   Automobiles는 기준 범주, 두 더미변수가 모두 0인 경우
+-   $D_1$: Computer 범주의 더미 변수 (Computer=1, 그 외=0)
+-   $D_2$: E-Coupon Service 범주의 더미 변수 <br>(E-Coupon Service=1, 그 외=0)
+
+------------------------------------------------------------------------
+
+> 이를 토대로 각 품목별 회귀식은 다음과 같이 해석:
+
+-   Automobiles 기준 $$
+    \text{Mobile} = \beta_0 + \beta_1 \times \text{Internet} + \varepsilon
+    $$
+
+-   Computer 기준 $$
+    \text{Mobile} = (\beta_0 + \beta_2) + (\beta_1 + \beta_4) \times \text{Internet} + \varepsilon
+    $$
+
+-   E-Coupon Service 기준 $$
+    \text{Mobile} = (\beta_0 + \beta_3) + (\beta_1 + \beta_5) \times \text{Internet} +
+    \varepsilon
+    $$
+
+------------------------------------------------------------------------
+
+## 회귀분석 결과
+
+<br>
+
+::: panel-tabset
+### 코드
+
+```{python}
+#| echo: true
+#| eval: false
+#| code-fold: false
+
+
+# 세 품목의 데이터만 필터링하여 통합 데이터셋 생성
+categories = ['Automobiles', 'E-Coupon Service', 'Computer']
+df_unified = df_selected[df_selected['상품군코드'].isin(categories)].copy()
+
+# 통합 회귀모델 생성
+model_unified = smf.ols(
+    formula='Mobile ~ Internet * C(상품군코드)', 
+    data=df_unified
+).fit()
+
+print("[통합 회귀모델 요약]")
+print(model_unified.summary())
+
+# 정규성 검정 (Shapiro-Wilk)
+resid_unified = model_unified.resid
+stat, p_value = shapiro(resid_unified)
+print(f"\nShapiro-Wilk 정규성 검정 p-value: {p_value:.4f}")
+print(f"정규성 만족 여부: {'만족' if p_value > 0.05 else '불만족'}")
+
+# 등분산성 검정 (Breusch-Pagan)
+bp_test_unified = het_breuschpagan(resid_unified, model_unified.model.exog)
+print(f"Breusch-Pagan 등분산성 검정 p-value: {bp_test_unified[1]:.4f}")
+print(f"등분산성 만족 여부: {'만족' if bp_test_unified[1] > 0.05 else '불만족'}")
+
+
+
+```
+
+### 결과
+
+```{python}
+#| echo: false
+
+# 세 품목의 데이터만 필터링하여 통합 데이터셋 생성
+categories = ['Automobiles', 'E-Coupon Service', 'Computer']
+df_unified = df_selected[df_selected['상품군코드'].isin(categories)].copy()
+
+# 통합 회귀모델 생성
+model_unified = smf.ols(
+    formula='Mobile ~ Internet * C(상품군코드)', 
+    data=df_unified
+).fit()
+
+
+print("[통합 회귀모델 요약]")
+print(model_unified.summary())
+
+# 정규성 검정 (Shapiro-Wilk)
+resid_unified = model_unified.resid
+stat, p_value = shapiro(resid_unified)
+print(f"\nShapiro-Wilk 정규성 검정 p-value: {p_value:.4f}")
+print(f"정규성 만족 여부: {'만족' if p_value > 0.05 else '불만족'}")
+
+# 등분산성 검정 (Breusch-Pagan)
+bp_test_unified = het_breuschpagan(resid_unified, model_unified.model.exog)
+print(f"Breusch-Pagan 등분산성 검정 p-value: {bp_test_unified[1]:.4f}")
+print(f"등분산성 만족 여부: {'만족' if bp_test_unified[1] > 0.05 else '불만족'}")
+
+```
+:::
+
+------------------------------------------------------------------------
+
+## 회귀모델 보완의 필요성
+
+<br>
+
+> 잔차의 정규성 및 등분산성 가정 불만족
+
+> 보완을 위한 적절한 조치가 필요 -\> 이를 위한 **로그 변환** 수행
+
+------------------------------------------------------------------------
+
+## 분석 (2) 로그 변환 적용 회귀분석
+
+<br>
+
+::: {style="font-size: 0.8em;"}
+$$
+\log(\text{Mobile}) = \beta_0 + \beta_1 \times \log(\text{Internet}) + \beta_2 \times D_1 + \beta_3 \times D_2 + \beta_4 \times (\log(\text{Internet}) \times D_1) + \beta_5 \times (\log(\text{Internet}) \times D_2) + \varepsilon
+$$
+
+> 로그 변환 후 기울기 계수는 탄력성(elasticity)을 의미
+
+-   Automobiles(기준 범주): 탄력성 = $\beta_1$
+-   Computer: 탄력성 = $\beta_1 + \beta_4$
+-   E-Coupon Service: 탄력성 = $\beta_1 + \beta_5$
+:::
+
+<br>
+
+### 탄력성 해석 예시 - Automobiles
+
++-----------------+----------------------------------------------------+
+| 탄력성 조건     | 해석                                               |
++=================+====================================================+
+| $\beta_1 > 1$   | 인터넷쇼핑 1% 증가                                 |
+|                 |                                                    |
+|                 | → Automobiles 모바일쇼핑 1% 이상 증가              |
++-----------------+----------------------------------------------------+
+| $\beta_1 = 1$   | 인터넷쇼핑 1% 증가                                 |
+|                 |                                                    |
+|                 | → Automobiles 모바일쇼핑 1% 증가                   |
++-----------------+----------------------------------------------------+
+| $\beta_1 < 1$   | 인터넷쇼핑 1% 증가                                 |
+|                 |                                                    |
+|                 | → Automobiles 모바일쇼핑 1% 미만 증가              |
++-----------------+----------------------------------------------------+
+
+------------------------------------------------------------------------
+
+## 로그 변환 회귀분석 결과
+
+::: panel-tabset
+## 코드
+
+```{python}
+#| echo: true
+#| eval: false
+#| code-fold: false
+
+
+# 로그 변환 변수 생성
+df_unified['log_Mobile'] = np.log(df_automobile['Mobile'])
+df_unified['log_Internet'] = np.log(df_automobile['Internet'])
+
+# 로그-로그 통합 모델
+model_unified_log = smf.ols(
+    formula='log_Mobile ~ log_Internet * C(상품군코드)', 
+    data=df_unified
+).fit()
+
+print("\n[통합 로그-로그 회귀모델 요약]")
+print(model_unified_log.summary())
+
+# 정규성 검정 (Shapiro-Wilk)
+resid_unified_log = model_unified_log.resid
+stat, p_value_log = shapiro(resid_unified_log)
+print(f"\nShapiro-Wilk 정규성 검정 p-value: {p_value_log:.4f}")
+print(f"정규성 만족 여부: {'만족' if p_value_log > 0.05 else '불만족'}")
+
+# 등분산성 검정 (Breusch-Pagan)
+bp_test_unified_log = het_breuschpagan(resid_unified_log, model_unified_log.model.exog)
+print(f"Breusch-Pagan 등분산성 검정 p-value: {bp_test_unified_log[1]:.4f}")
+print(f"등분산성 만족 여부: {'만족' if bp_test_unified_log[1] > 0.05 else '불만족'}")
+
+```
+
+## 결과
+
+```{python}
+#| echo: false
+
+# 로그 변환 변수 생성 (아직 없는 경우 생성)
+if 'log_Mobile' not in df_unified.columns:
+    df_unified['log_Mobile'] = np.log(df_unified['Mobile'])
+if 'log_Internet' not in df_unified.columns:
+    df_unified['log_Internet'] = np.log(df_unified['Internet'])
+
+# 로그-로그 통합 모델
+model_unified_log = smf.ols(
+    formula='log_Mobile ~ log_Internet * C(상품군코드)', 
+    data=df_unified
+).fit()
+
+print("\n[통합 로그-로그 회귀모델 요약]")
+print(model_unified_log.summary())
+
+# 정규성 검정 (Shapiro-Wilk)
+resid_unified_log = model_unified_log.resid
+stat, p_value_log = shapiro(resid_unified_log)
+print(f"\nShapiro-Wilk 정규성 검정 p-value: {p_value_log:.4f}")
+print(f"정규성 만족 여부: {'만족' if p_value_log > 0.05 else '불만족'}")
+
+# 등분산성 검정 (Breusch-Pagan)
+bp_test_unified_log = het_breuschpagan(resid_unified_log, model_unified_log.model.exog)
+print(f"Breusch-Pagan 등분산성 검정 p-value: {bp_test_unified_log[1]:.4f}")
+print(f"등분산성 만족 여부: {'만족' if bp_test_unified_log[1] > 0.05 else '불만족'}")
+
+
+```
+:::
+
+------------------------------------------------------------------------
+
+## 잔차의 정규성 및 등분산성 검정 시각화
+
+### 로그변환 Before vs After
+
+<br>
+
+```{python}
+#| echo: false
+
+# 품목별로 색상 매핑
+colors = {'Automobiles': 'blue', 'E-Coupon Service': 'green', 'Computer': 'orange'}
+
+# 잔차 분석 그래프 (Plotly 버전)
+fitted_values = model_unified.fittedvalues
+residuals = model_unified.resid
+
+fig = make_subplots(rows=1, cols=2, subplot_titles=('잔차 vs 예측값', '잔차 Q-Q 플롯'))
+
+# 각 품목별 잔차 표시
+for category in categories:
+    # 해당 품목 인덱스
+    idx = df_unified[df_unified['상품군코드'] == category].index
+    
+    # 첫 번째 서브플롯: 잔차 vs 예측값
+    fig.add_trace(
+        go.Scatter(
+            x=fitted_values[idx],
+            y=residuals[idx],
+            mode='markers',
+            marker=dict(color=colors[category], opacity=0.7),
+            name=f'{category} 잔차'
+        ),
+        row=1, col=1
+    )
+
+# 기준선(y=0) 추가
+fig.add_shape(
+    type="line",
+    x0=min(fitted_values),
+    y0=0,
+    x1=max(fitted_values),
+    y1=0,
+    line=dict(color="red", width=2, dash="solid"),
+    row=1, col=1
+)
+
+# 두 번째 서브플롯: Q-Q 플롯
+(osm, osr), _ = stats.probplot(residuals)
+
+fig.add_trace(
+    go.Scatter(
+        x=osm,
+        y=osr,
+        mode='markers',
+        marker=dict(color='purple', opacity=0.7),
+        name='Q-Q 플롯',
+        showlegend=True
+    ),
+    row=1, col=2
+)
+
+# Q-Q 플롯 참조선 추가
+slope, intercept, _, _, _ = stats.linregress(osm, osr)
+line_x = np.array([min(osm), max(osm)])
+line_y = intercept + slope * line_x
+
+fig.add_trace(
+    go.Scatter(
+        x=line_x,
+        y=line_y,
+        mode='lines',
+        line=dict(color='red', width=2),
+        name='참조선'
+    ),
+    row=1, col=2
+)
+
+# 그래프 레이아웃 설정
+fig.update_layout(
+    height=500,
+    width=900,
+    plot_bgcolor='rgba(240, 240, 240, 0.8)',
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="right",
+        x=1
+    )
+)
+
+fig.update_xaxes(title_text="예측값", row=1, col=1, showgrid=True, gridwidth=1, gridcolor='rgba(211, 211, 211, 0.6)')
+fig.update_yaxes(title_text="잔차", row=1, col=1, showgrid=True, gridwidth=1, gridcolor='rgba(211, 211, 211, 0.6)')
+fig.update_xaxes(title_text="이론적 분위수", row=1, col=2, showgrid=True, gridwidth=1, gridcolor='rgba(211, 211, 211, 0.6)')
+fig.update_yaxes(title_text="표본 분위수", row=1, col=2, showgrid=True, gridwidth=1, gridcolor='rgba(211, 211, 211, 0.6)')
+
+fig.show()
+
+
+```
+
+<br>
+
+```{python}
+#| echo: false
+
+# 로그-로그 모델 잔차 분석 그래프
+fitted_values_log = model_unified_log.fittedvalues
+residuals_log = model_unified_log.resid
+
+fig = make_subplots(rows=1, cols=2, subplot_titles=('잔차 vs 예측값 (로그-로그 모델)', '잔차 Q-Q 플롯 (로그-로그 모델)'))
+
+# 각 품목별 잔차 표시
+for category in categories:
+    # 해당 품목 인덱스
+    idx = df_unified[df_unified['상품군코드'] == category].index
+    
+    # 첫 번째 서브플롯: 잔차 vs 예측값
+    fig.add_trace(
+        go.Scatter(
+            x=fitted_values_log[idx],
+            y=residuals_log[idx],
+            mode='markers',
+            marker=dict(color=colors[category], opacity=0.7),
+            name=f'{category} 잔차'
+        ),
+        row=1, col=1
+    )
+
+# 기준선(y=0) 추가
+fig.add_shape(
+    type="line",
+    x0=min(fitted_values_log),
+    y0=0,
+    x1=max(fitted_values_log),
+    y1=0,
+    line=dict(color="red", width=2, dash="solid"),
+    row=1, col=1
+)
+
+# 두 번째 서브플롯: Q-Q 플롯
+(osm, osr), _ = stats.probplot(residuals_log)
+
+fig.add_trace(
+    go.Scatter(
+        x=osm,
+        y=osr,
+        mode='markers',
+        marker=dict(color='purple', opacity=0.7),
+        name='Q-Q 플롯',
+        showlegend=True
+    ),
+    row=1, col=2
+)
+
+# Q-Q 플롯 참조선 추가
+slope, intercept, _, _, _ = stats.linregress(osm, osr)
+line_x = np.array([min(osm), max(osm)])
+line_y = intercept + slope * line_x
+
+fig.add_trace(
+    go.Scatter(
+        x=line_x,
+        y=line_y,
+        mode='lines',
+        line=dict(color='red', width=2),
+        name='참조선'
+    ),
+    row=1, col=2
+)
+
+# 그래프 레이아웃 설정
+fig.update_layout(
+    height=500,
+    width=900,
+    plot_bgcolor='rgba(240, 240, 240, 0.8)',
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="right",
+        x=1
+    )
+)
+
+fig.update_xaxes(title_text="예측값 (로그 변환)", row=1, col=1, showgrid=True, gridwidth=1, gridcolor='rgba(211, 211, 211, 0.6)')
+fig.update_yaxes(title_text="잔차", row=1, col=1, showgrid=True, gridwidth=1, gridcolor='rgba(211, 211, 211, 0.6)')
+fig.update_xaxes(title_text="이론적 분위수", row=1, col=2, showgrid=True, gridwidth=1, gridcolor='rgba(211, 211, 211, 0.6)')
+fig.update_yaxes(title_text="표본 분위수", row=1, col=2, showgrid=True, gridwidth=1, gridcolor='rgba(211, 211, 211, 0.6)')
+
+fig.show()
+```
+
+------------------------------------------------------------------------
+
+## 회귀모델 시각화
+
+### 로그변환 Before vs After
+
+<br>
+
+::: panel-tabset
+### Before
+
+```{python}
+#| echo: false
+
+# 품목별 통합 회귀모델 시각화
+fig = go.Figure()
+
+# 각 품목별 데이터와 회귀선 추가
+for category in categories:
+    # 해당 품목 데이터 필터링
+    df_cat = df_unified[df_unified['상품군코드'] == category]
+    
+    # 산점도 추가
+    fig.add_trace(
+        go.Scatter(
+            x=df_cat['Internet'],
+            y=df_cat['Mobile'],
+            mode='markers',
+            name=f'{category} 데이터',
+            marker=dict(color=colors[category], size=10, opacity=0.7)
+        )
+    )
+    
+    # 해당 품목에 대한 예측선 생성을 위한 X 값 준비
+    x_range = np.linspace(df_cat['Internet'].min(), df_cat['Internet'].max(), 100)
+    
+    # 통합 모델을 이용한 예측값 계산을 위해 가상 데이터프레임 생성
+    pred_df = pd.DataFrame({
+        'Internet': x_range,
+        '상품군코드': category
+    })
+    
+    # predict 메서드를 사용하여 예측값 계산
+    y_pred = model_unified.predict(pred_df)
+    
+    # 회귀선 추가
+    fig.add_trace(
+        go.Scatter(
+            x=x_range,
+            y=y_pred,
+            mode='lines',
+            name=f'{category} 회귀선',
+            line=dict(color=colors[category], width=2)
+        )
+    )
+
+# 그래프 레이아웃 설정
+fig.update_layout(
+    title='품목별 인터넷쇼핑 vs 모바일쇼핑 거래액 (통합 회귀모델)',
+    title_font_size=16,
+    xaxis_title='인터넷쇼핑 거래액 (백만원)',
+    yaxis_title='모바일쇼핑 거래액 (백만원)',
+    legend_title='범례',
+    plot_bgcolor='rgba(240, 240, 240, 0.8)',
+    xaxis=dict(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(211, 211, 211, 0.6)'
+    ),
+    yaxis=dict(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(211, 211, 211, 0.6)'
+    ),
+    height=600,
+    width=1000
+)
+
+fig.show()
+
+```
+
+### After
+
+```{python}
+#| echo: false
+
+# 로그-로그 모델을 원본 척도로 변환하여 시각화
+fig = go.Figure()
+
+# 각 품목별 원본 데이터와 변환된 회귀선 추가
+for category in categories:
+    # 해당 품목 데이터 필터링
+    df_cat = df_unified[df_unified['상품군코드'] == category]
+    
+    # 원본 산점도 추가
+    fig.add_trace(
+        go.Scatter(
+            x=df_cat['Internet'],
+            y=df_cat['Mobile'],
+            mode='markers',
+            name=f'{category} 원본 데이터',
+            marker=dict(color=colors[category], size=10, opacity=0.7)
+        )
+    )
+    
+    # 해당 품목에 대한 예측을 위한 X 값 준비 (원본 척도)
+    x_original = np.linspace(df_cat['Internet'].min(), df_cat['Internet'].max(), 100)
+    
+    # 로그 변환
+    x_log = np.log(x_original)
+    
+    # 통합 모델을 이용한 예측값 계산을 위해 가상 데이터프레임 생성
+    pred_df = pd.DataFrame({
+        'log_Internet': x_log,
+        '상품군코드': category
+    })
+    
+    # predict 메서드를 사용하여 로그 척도에서의 예측값 계산
+    y_log_pred = model_unified_log.predict(pred_df)
+    
+    # 원본 척도로 변환 (지수 변환)
+    y_pred_original = np.exp(y_log_pred)
+    
+    # 변환된 회귀선 추가
+    fig.add_trace(
+        go.Scatter(
+            x=x_original,
+            y=y_pred_original,
+            mode='lines',
+            name=f'{category} 회귀선 (변환)',
+            line=dict(color=colors[category], width=2)
+        )
+    )
+
+# 그래프 레이아웃 설정
+fig.update_layout(
+    title='품목별 인터넷쇼핑 vs 모바일쇼핑 거래액 (로그-로그 모델 원본 척도 변환)',
+    title_font_size=16,
+    xaxis_title='인터넷쇼핑 거래액 (백만원)',
+    yaxis_title='모바일쇼핑 거래액 (백만원)',
+    legend_title='범례',
+    plot_bgcolor='rgba(240, 240, 240, 0.8)',
+    xaxis=dict(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(211, 211, 211, 0.6)'
+    ),
+    yaxis=dict(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(211, 211, 211, 0.6)'
+    ),
+    height=600,
+    width=1000
+)
+
+fig.show()
+
+```
+:::
+
+------------------------------------------------------------------------
+
+## 품목별 기울기(탄력성) 비교 시각화
+
+```{python}
+#| echo: false
+
+# 모델에서 기울기 계수 추출
+params = model_unified_log.params
+base_category = sorted(df_unified['상품군코드'].unique())[0]
+
+# 기준 범주의 기울기
+base_slope = params['log_Internet']
+print(f"\n{base_category}의 기울기: {base_slope:.4f}")
+
+# 다른 품목들의 기울기
+for category in categories:
+    if category != base_category:
+        interaction_term = f"log_Internet:C(상품군코드)[T.{category}]"
+        if interaction_term in params:
+            category_slope = base_slope + params[interaction_term]
+            print(f"{category}의 기울기: {category_slope:.4f}")
+
+# 품목별 기울기 비교 시각화
+fig = go.Figure()
+
+# 기울기 데이터 준비
+slopes = [base_slope]
+slope_labels = [base_category]
+
+# 다른 품목들의 기울기 계산
+for category in categories:
+    if category != base_category:
+        interaction_term = f"log_Internet:C(상품군코드)[T.{category}]"
+        if interaction_term in params:
+            category_slope = base_slope + params[interaction_term]
+            slopes.append(category_slope)
+            slope_labels.append(category)
+
+# 바 차트 그리기
+fig.add_trace(go.Bar(
+    x=slope_labels,
+    y=slopes,
+    text=[f"{s:.3f}" for s in slopes],
+    textposition='outside',
+    marker_color=[colors[cat] for cat in slope_labels],
+    width=0.5
+))
+
+# 그래프 레이아웃 설정
+fig.update_layout(
+    title='로그-로그 모델: 품목별 기울기 비교 (탄력성)',
+    title_font_size=16,
+    xaxis_title='상품군',
+    yaxis_title='기울기 (탄력성)',
+    plot_bgcolor='rgba(240, 240, 240, 0.8)',
+    xaxis=dict(
+        showgrid=False,
+    ),
+    yaxis=dict(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(211, 211, 211, 0.6)',
+        zerolinecolor='black'
+    ),
+    height=500,
+    width=800
+)
+
+fig.show()
+```
+
+------------------------------------------------------------------------
+
+## 🎯 주제 4 최종 선택 품목
+
+<br>
+
+### 👑  Computer (컴퓨터 및 주변기기) 
+
+> 가장 높은 탄력성을 보여 <br> 인터넷 쇼핑 채널의 성장이 모바일 쇼핑 채널에 <br> 강한 긍정적 영향을 줌
+
+------------------------------------------------------------------------
+
+
+## 주제 5. 최종 선택 품목의 월별 거래량은 어떻게 될까 
+
+
+> "Computer 품목의 월별 거래량은 안정성을 띌까?"
+
+-   **분석 방법**: anova, 사후분석
+-   **대상 품목**: 컴퓨터 
+
+
+
+
+
+
+-----------------------------------------------------------------------
+
+## 분석(1) Computer 연도별 월별 거래액 추세
+
+```{python}
+
+#| echo: false
+
+import plotly.express as px
+import numpy as np
+import calendar
+from scipy.stats import shapiro, ttest_ind, wilcoxon, chi2_contingency,ttest_rel, f_oneway
+
+```
+
+```{python}
+
+# Computer products만 필터링 (대소문자 및 공백 주의: 실제 데이터와 일치해야 합니다)
+agri_df = df_long[df_long['상품군코드'] == 'Computer'].copy()
+
+# 연도와 월별 거래액 총합 계산 후 정렬
+monthly_sum = agri_df.groupby(['연도', '월'])['거래액_백만원'].sum().reset_index()
+monthly_sum = monthly_sum.sort_values(['연도', '월'])
+
+# 연도 컬럼을 문자열로 바꿔야 범례에서 잘 나옵니다.
+monthly_sum['연도_str'] = monthly_sum['연도'].astype(str)
+
+# Plotly Express 라인 차트
+fig = px.line(
+    monthly_sum,
+    x='월',
+    y='거래액_백만원',
+    color='연도_str',
+    markers=True,
+    title='Monthly Transaction Trend: Computer Products (Plotly)',
+    color_discrete_sequence=px.colors.sequential.Viridis
+)
+
+```
+
+```{python}
+
+#| echo: false
+
+# x축 눈금 월 이름으로 바꾸기
+fig.update_layout(
+    xaxis=dict(
+        title='Month',
+        tickmode='array',
+        tickvals=list(range(1,13)),
+        ticktext=[calendar.month_abbr[m] for m in range(1,13)]
+    ),
+    yaxis=dict(title='Transaction Amount (₩100M)'),
+    legend_title_text='Year',
+    template='plotly_white'
+)
+
+fig.show()
+
+```
+
+연도별 월별 거래액이 일관된 패턴을 유지, 큰 등락 없이 안정적인 수요 확인
+
+
+------------------------------------------------------------------------
+
+## Computer 월별 평균 거래액 비교
+
+```{python}
+
+#| echo: false
+
+# 월 평균 그래프 (각 월의 평균 거래액)
+monthly_avg = monthly_sum.groupby('월')['거래액_백만원'].mean().reset_index()
+monthly_avg = monthly_avg.sort_values('월')
+
+season_colors = ['#1f77b4', '#1f77b4', '#1f77b4',  # 겨울
+                 '#2ca02c', '#2ca02c', '#2ca02c',  # 봄
+                 '#ff7f0e', '#ff7f0e', '#ff7f0e',  # 여름
+                 '#d62728', '#d62728', '#d62728']  # 가을
+
+
+```
+
+```{python}
+
+# '월'을 문자열로 바꿔 순서 보장
+monthly_avg['월_str'] = monthly_avg['월'].astype(str)
+
+fig = px.bar(
+    monthly_avg,
+    x='월_str',
+    y='거래액_백만원',
+    color='월_str',
+    color_discrete_sequence=season_colors,
+    category_orders={'월_str': [str(m) for m in range(1,13)]},
+    title="월별 평균 거래액 (Season Highlight)"
+)
+
+fig.update_layout(
+    xaxis_title="월",
+    yaxis_title="평균 거래액 (₩100M)",
+    showlegend=False,
+    template="plotly_white"
+)
+
+fig.update_xaxes(
+    tickmode='array',
+    tickvals=[str(m) for m in range(1,13)],
+    ticktext=[calendar.month_abbr[m] for m in range(1,13)]
+)
+
+fig.show()
+
+```
+
+계절성 영향 미미, 연중 안정적 수요
+
+-------------------------------------------------------------------------
+
+## 분석(2) Computer ANOVA 분석 결과
+
+```{python}
+
+df_long[df_long['상품군코드'] == 'Computer']
+df_long['월'] = df_long['년월'].dt.month
+
+# # 1월~12월 각각의 거래액 리스트로 분리
+anova_groups = [df_long[df_long['월'] == m]['거래액_백만원'] for m in range(1, 13)]
+
+# ANOVA
+f_stat, p_val = f_oneway(*anova_groups)
+print(f"📊 ANOVA 결과: F = {f_stat:.4f}, p = {p_val:.4e}")
+
+
+df_long['월'] = df_long['년월'].dt.month
+total_df = df_long[df_long['상품군코드'] == 'Computer']
+monthly_values = total_df.groupby(['년월', '월'])['거래액_백만원'].sum().reset_index()
+anova_groups = [monthly_values[monthly_values['월'] == m]['거래액_백만원'] for m in range(1, 13)]
+f_stat, p_val = f_oneway(*anova_groups)
+print(f"📊 ANOVA 결과: F = {f_stat:.4f}, p = {p_val:.4e}")
+
+# 사후검정
+# 월 컬럼이 범주형이면 더 정확함
+monthly_values['월'] = monthly_values['월'].astype(str)  # 또는 category
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
+
+# Tukey HSD 실행
+tukey_result = pairwise_tukeyhsd(
+    endog=monthly_values['거래액_백만원'],   # y값 (연속형)
+    groups=monthly_values['월'],           # 그룹핑할 카테고리 (월)
+    alpha=0.05                             # 유의수준
+)
+
+```
+
+```{python}
+
+#| echo: false
+
+# 결과 출력
+print(tukey_result)
+
+tukey_result.plot_simultaneous(figsize=(12, 6))
+plt.title("Tukey 사후검정: 월별 거래액 평균 차이")
+plt.xlabel("거래액 차이 (백만원)")
+plt.show()
+
+```
+
+
+-----------------------------------------------------------------------------------
+
+## Tukey HSD 사후검정 결과 시각화
+
+```{python}
+
+#| echo: false
+
+import plotly.express as px
+import calendar
+
+
+```
+
+```{python}
+
+# (필요하다면) 월 컬럼 재생성
+df_long['월'] = df_long['년월'].dt.month
+
+# Computer 품목만 필터링, 월별 합계 계산
+comp_df = df_long[df_long['상품군코드']=='Computer'].copy()
+monthly_values = comp_df.groupby(['년월','월'])['거래액_백만원'].sum().reset_index()
+
+# 월을 문자열로 바꿔서 순서 보장
+monthly_values['월_str'] = monthly_values['월'].astype(str)
+
+# Plotly Express 박스플롯
+fig = px.box(
+    monthly_values,
+    x='월_str',
+    y='거래액_백만원',
+    color='월_str',
+    category_orders={'월_str': [str(m) for m in range(1,13)]},
+    color_discrete_sequence=season_colors,
+    title="Computer 품목 월별 거래액 분포"
+)
+
+```
+
+```{python}
+
+#| echo: false
+#| fig-width: 12    # 인치 단위
+#| fig-height: 6
+#| out-width: '100%' # 셀 폭에 맞춰 늘리기
+#| out-height: 'auto'
+
+import matplotlib.pyplot as plt
+# … 기존 박스플롯 코드 …
+plt.show()
+
+# 계절별 색상 (1–3월: 겨울, 4–6월: 봄, 7–9월: 여름, 10–12월: 가을)
+season_colors = [
+    '#1f77b4', '#1f77b4', '#1f77b4',  # 겨울
+    '#2ca02c', '#2ca02c', '#2ca02c',  # 봄
+    '#ff7f0e', '#ff7f0e', '#ff7f0e',  # 여름
+    '#d62728', '#d62728', '#d62728'   # 가을
+]
+
+# 레이아웃 및 축 라벨
+fig.update_layout(
+    xaxis_title="월",
+    yaxis_title="거래액 (백만원)",
+    showlegend=False,
+    template="plotly_white"
+)
+
+# x축 눈금을 Jan–Dec로 표시
+fig.update_xaxes(
+    tickmode='array',
+    tickvals=[str(m) for m in range(1,13)],
+    ticktext=[calendar.month_abbr[m] for m in range(1,13)]
+)
+
+
+fig.show()
+
+```
+
+월별 거래액 분포 안정적, 계절적 편차 최소
+
+
+
+------------------------------------------------------------------------
+
+## 📦 \[최종 제안\] 창업 추천 품목: **Computer**
+
+### 💼 컨설턴트 의견 요약
+
+-   ✅ **시장성**: 최근 3년간 거래액 꾸준한 상승세\
+-   ✅ **안정성**: 연도별 거래액 변동성 **최저** (분산 1위)\
+-   ✅ **지속성**: 계절/성수기 영향 없음 → **연중 수요 안정**\
+-   ✅ **채널 간 시너지**: 인터넷 판매와 모바일 판매 간 영향력이 가장 크게 나타남
+
+------------------------------------------------------------------------
+
+## Q&A
+
+> 궁금하신 점 있으신가요?
+
+------------------------------------------------------------------------
